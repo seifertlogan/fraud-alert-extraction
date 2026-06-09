@@ -31,6 +31,52 @@ pipeline demonstrates how fine-tuned LLMs can standardize extraction
 from unstructured banking text — enabling downstream automation like
 case management routing, SAR filing triggers, and risk scoring.
 
+## Design Decisions
+
+**Fine-tuning over few-shot prompting.** At meaningful volume (5K+
+narratives/month), fine-tuning amortizes the upfront cost within a
+quarter while reducing per-request tokens by roughly 60% and
+improving output consistency.
+
+**Single-shot extraction over multi-step.** The input is bounded
+and the output schema is fixed, so single-shot is correct. A
+multi-step pipeline (extract → validate → enrich with customer
+history) would be appropriate if extractions needed to reference
+external context.
+
+**Synthetic training data, no PII.** All 25 examples are synthetic
+narratives modeled on real fraud typologies. In a real deployment,
+training data would require either tokenized PII or full PII
+handling controls and a model deployed in a SOC 2 / FFIEC-aligned
+environment.
+
+**Null-tolerant schema.** Every field appears in every output, with
+explicit `null` values when unknown. This makes downstream systems
+trivially parseable — no field-existence checks, no `KeyError`
+handling.
+
+**Eleven fields, not three.** A minimal schema (amount, type, risk)
+would have been easier to train but less useful. I built the schema
+to cover everything an actual fraud case file would need so the
+output is directly consumable by case management, not just a demo.
+
+## Production Considerations
+
+This is a portfolio project, not a deployed system. Production
+deployment would require:
+
+- **Monitoring**: daily sampling of model outputs against analyst
+  decisions to detect drift
+- **Retraining cadence**: quarterly, or after material FinCEN
+  guidance changes or new fraud typology emergence
+- **Audit trail**: every classification logged with model version,
+  input hash, output, and timestamp for examiner review
+- **Human in the loop**: model output never auto-files a SAR.
+  Output routes to an analyst with the model's reasoning as
+  decision support, not decision authority
+- **PII handling**: real narratives require encryption in transit
+  and at rest, plus role-based access on extracted fields
+
 ## Project Structure
 
 | File | Purpose |
@@ -40,62 +86,20 @@ case management routing, SAR filing triggers, and risk scoring.
 | `finetune.py` | Submits the fine-tuning job to OpenAI's API and polls for completion |
 | `test_model.py` | Evaluates the fine-tuned model against unseen test cases |
 
-## Dataset Design
-
-The training data covers a deliberate range of scenarios:
-
-**Transaction types:** ACH debit/credit, wire, card, check, other
-**Risk levels:** low, medium, high, critical
-**Edge cases included:**
-- Legitimate transactions that look suspicious (large authorized purchases, established remittance patterns)
-- Elder financial exploitation
-- Structuring / BSA threshold avoidance
-- Money mule patterns
-- Business email compromise
-- Card testing fraud
-- Foreign currency (EUR)
-- Ambiguous low-information reports
-
-## Schema
-
-Every extraction returns the same 11 fields, using `null` for unknown values:
-
-| Field | Type |
-|---|---|
-| transaction_type | enum |
-| amount | number or null |
-| currency | string |
-| account_last4 | string or null |
-| transaction_date | ISO date or null |
-| originator | string or null |
-| fraud_indicators | array of strings |
-| customer_reported | boolean |
-| recommended_action | string or null |
-| risk_level | enum (low/medium/high/critical) |
-| sar_required | boolean |
-
 ## Usage
 
 ```bash
-# 1. Validate the training data
 python validate_data.py training_data.jsonl
-
-# 2. Set your OpenAI API key
 export OPENAI_API_KEY="sk-..."
-
-# 3. Submit the fine-tuning job
 python finetune.py
-
-# 4. Test the resulting model
 python test_model.py ft:gpt-3.5-turbo:your-org:custom:abc123
 ```
 
 ## Project Status
 
-✅ Schema designed
-✅ Training dataset built (25 examples, validated)
-✅ Validation, fine-tuning, and evaluation scripts complete
-⏸️ Fine-tuning job not yet executed — pipeline is ready to run when sponsored by a real use case
+✅ Schema designed, dataset built, scripts complete
+⏸️ Fine-tuning job not yet executed — pipeline is ready to run
+when sponsored by a real use case
 
 ## Background
 
